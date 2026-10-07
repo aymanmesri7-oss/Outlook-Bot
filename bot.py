@@ -98,10 +98,15 @@ async def send_panel(ctx):
     embed = discord.Embed(
         title="📧 Adresse Email Outlook",
         description=(
-            "Clique sur le bouton ci-dessous pour recevoir "
-            "une adresse Outlook **en message privé**.\n\n"
-            "⚠️ **Active tes messages privés** avant de cliquer !\n"
-            "(Paramètres du serveur → Confidentialité)"
+            "Clique sur 📧 **Recevoir une adresse email** "
+            "pour recevoir une adresse Outlook **en message privé** 📩\n\n"
+            "Tu recevras une ligne au format "
+            "`login:password:refresh_token:client_id`.\n\n"
+            "**Quoi faire :**\n"
+            "1️⃣ Va sur **outlook.com** et connecte-toi avec le **login + mot de passe**.\n"
+            "2️⃣ C'est **sur cette boîte mail** que tu reçois les **mails / codes de vérification** de tes comptes.\n\n"
+            "⚠️ **Active tes messages privés** "
+            "(Paramètres du serveur → Confidentialité) pour recevoir l'adresse."
         ),
         color=0x0078D4,
     )

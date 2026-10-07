@@ -89,6 +89,17 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     bot.add_view(GetAccountButton())
     print(f"Bot connecté : {bot.user}")
+    print(f"ADMIN_IDS = {ADMIN_IDS}")
+    print(f"Intents message_content = {bot.intents.message_content}")
+    print(f"Serveurs : {[g.name for g in bot.guilds]}")
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    print(f"[MSG] {message.author} ({message.author.id}) dans #{message.channel}: {message.content[:50]}")
+    await bot.process_commands(message)
 
 
 @bot.command(name="panel")

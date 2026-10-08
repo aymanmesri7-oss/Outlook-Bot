@@ -44,8 +44,11 @@ class GetAccountButton(ui.View):
         save_accounts(accounts)
 
         parts = account.split(":")
-        if len(parts) == 4:
-            login, password, refresh_token, client_id = parts
+        if len(parts) >= 4:
+            login = parts[0]
+            password = parts[1]
+            refresh_token = parts[2]
+            client_id = parts[3]
             msg = (
                 f"📧 **Ton adresse Outlook**\n\n"
                 f"```\n{account}\n```\n\n"

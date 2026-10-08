@@ -52,7 +52,11 @@ class GetAccountButton(ui.View):
             f"**Email :** `{login}`\n"
             f"**Mot de passe :** `{password}`\n\n"
             f"➡️ Va sur **outlook.com** et connecte-toi avec l'email + mot de passe.\n"
-            f"C'est sur cette boîte mail que tu recevras les mails / codes de vérification."
+            f"C'est sur cette boîte mail que tu recevras les mails / codes de vérification.\n\n"
+            f"⚠️ **Si Microsoft te demande une vérification :**\n"
+            f"1️⃣ Clique sur **\"Je ne les ai plus\"**\n"
+            f"2️⃣ Puis clique sur **\"Utiliser mon mot de passe\"** si proposé\n"
+            f"3️⃣ Entre le mot de passe donné ci-dessus"
         )
 
         try:

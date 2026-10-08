@@ -7,6 +7,7 @@ import os
 TOKEN = os.getenv("DISCORD_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 ACCOUNTS_FILE = "accounts.json"
+LOG_CHANNEL_ID = 1557641355767844944
 
 
 def load_accounts():
@@ -60,6 +61,21 @@ class GetAccountButton(ui.View):
                 "✅ Adresse envoyée en message privé ! Vérifie tes DMs.",
                 ephemeral=True,
             )
+            # Log dans le salon logs
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                remaining = len(accounts)
+                log_embed = discord.Embed(
+                    title="📤 Compte distribué",
+                    description=(
+                        f"**Utilisateur :** {interaction.user.mention} (`{interaction.user}`)\n"
+                        f"**Email donné :** `{login}`\n"
+                        f"**Stock restant :** {remaining} adresses"
+                    ),
+                    color=0x2ECC71,
+                )
+                log_embed.set_footer(text=f"ID: {interaction.user.id}")
+                await log_channel.send(embed=log_embed)
         except discord.Forbidden:
             accounts.insert(0, account)
             save_accounts(accounts)
@@ -68,6 +84,18 @@ class GetAccountButton(ui.View):
                 "(Paramètres du serveur → Confidentialité) puis réessaie.",
                 ephemeral=True,
             )
+            # Log l'échec aussi
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                log_embed = discord.Embed(
+                    title="❌ Échec distribution",
+                    description=(
+                        f"**Utilisateur :** {interaction.user.mention} (`{interaction.user}`)\n"
+                        f"**Raison :** DMs fermés"
+                    ),
+                    color=0xE74C3C,
+                )
+                await log_channel.send(embed=log_embed)
 
 
 intents = discord.Intents.default()

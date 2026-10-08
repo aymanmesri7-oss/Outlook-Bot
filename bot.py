@@ -44,27 +44,15 @@ class GetAccountButton(ui.View):
         save_accounts(accounts)
 
         parts = account.split(":")
-        if len(parts) >= 4:
-            login = parts[0]
-            password = parts[1]
-            refresh_token = parts[2]
-            client_id = parts[3]
-            msg = (
-                f"📧 **Ton adresse Outlook**\n\n"
-                f"```\n{account}\n```\n\n"
-                f"**Login :** `{login}`\n"
-                f"**Password :** `{password}`\n"
-                f"**Refresh Token :** `{refresh_token}`\n"
-                f"**Client ID :** `{client_id}`\n\n"
-                f"➡️ Va sur **outlook.com** et connecte-toi avec le login + mot de passe.\n"
-                f"C'est sur cette boîte mail que tu recevras les mails / codes de vérification."
-            )
-        else:
-            msg = (
-                f"📧 **Ton adresse Outlook**\n\n"
-                f"```\n{account}\n```\n\n"
-                f"➡️ Va sur **outlook.com** et connecte-toi avec ces identifiants."
-            )
+        login = parts[0]
+        password = parts[1] if len(parts) > 1 else ""
+        msg = (
+            f"📧 **Ton adresse Outlook**\n\n"
+            f"**Email :** `{login}`\n"
+            f"**Mot de passe :** `{password}`\n\n"
+            f"➡️ Va sur **outlook.com** et connecte-toi avec l'email + mot de passe.\n"
+            f"C'est sur cette boîte mail que tu recevras les mails / codes de vérification."
+        )
 
         try:
             await interaction.user.send(msg)

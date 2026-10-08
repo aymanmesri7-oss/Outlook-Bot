@@ -31,7 +31,7 @@ def save_accounts(accounts):
 
 
 def load_assignments():
-    """Load user->account assignments {discord_user_id: account_string}"""
+    """Load user->accounts assignments {discord_user_id: [account_string, ...]}"""
     if not os.path.exists(ASSIGNMENTS_FILE):
         return {}
     with open(ASSIGNMENTS_FILE, "r") as f:
@@ -87,13 +87,12 @@ async def read_latest_emails(access_token, count=5):
 
 def extract_code(text):
     """Try to extract a verification code from email text"""
-    # Common patterns for verification codes (4-8 digits)
     patterns = [
-        r'\b(\d{6})\b',  # 6 digits (most common)
-        r'\b(\d{4})\b',  # 4 digits
-        r'\b(\d{5})\b',  # 5 digits
-        r'\b(\d{7})\b',  # 7 digits
-        r'\b(\d{8})\b',  # 8 digits
+        r'\b(\d{6})\b',
+        r'\b(\d{4})\b',
+        r'\b(\d{5})\b',
+        r'\b(\d{7})\b',
+        r'\b(\d{8})\b',
     ]
     for pattern in patterns:
         matches = re.findall(pattern, text)
@@ -114,31 +113,8 @@ class OutlookPanel(ui.View):
     async def get_account(self, interaction: discord.Interaction, button: ui.Button):
         user_id = str(interaction.user.id)
         assignments = load_assignments()
-
-        # Check if user already has an account
-        if user_id in assignments:
-            account_data = parse_account(assignments[user_id])
-            msg = (
-                f"📧 **Ton adresse Outlook**\n\n"
-                f"**Email :** `{account_data['email']}`\n"
-                f"**Mot de passe :** `{account_data['password']}`\n\n"
-                f"💡 Tu as déjà reçu cette adresse. La voici à nouveau."
-            )
-            try:
-                await interaction.user.send(msg)
-                await interaction.response.send_message(
-                    "📨 Tu as déjà une adresse ! Je te l'ai renvoyée en DM.",
-                    ephemeral=True,
-                )
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "⚠️ Impossible de t'envoyer un DM. Active tes messages privés.",
-                    ephemeral=True,
-                )
-            return
-
-        # Assign new account
         accounts = load_accounts()
+
         if not accounts:
             await interaction.response.send_message(
                 "❌ Plus d'adresses disponibles pour le moment. Contacte un admin.",
@@ -146,18 +122,22 @@ class OutlookPanel(ui.View):
             )
             return
 
+        # Take next account from stock
         account_str = accounts.pop(0)
         save_accounts(accounts)
 
-        # Save assignment
-        assignments[user_id] = account_str
+        # Add to user's list of accounts (no limit)
+        if user_id not in assignments:
+            assignments[user_id] = []
+        assignments[user_id].append(account_str)
         save_assignments(assignments)
 
         account_data = parse_account(account_str)
         has_token = bool(account_data["refresh_token"] and account_data["client_id"])
+        user_total = len(assignments[user_id])
 
         msg = (
-            f"📧 **Ton adresse Outlook**\n\n"
+            f"📧 **Ton adresse Outlook** (n°{user_total})\n\n"
             f"**Email :** `{account_data['email']}`\n"
             f"**Mot de passe :** `{account_data['password']}`\n\n"
             f"📌 **Utilise cet email** pour t'inscrire sur les sites (Twitter, Instagram…)\n\n"
@@ -167,7 +147,7 @@ class OutlookPanel(ui.View):
             msg += (
                 f"📩 **Pour recevoir tes codes de vérification :**\n"
                 f"Retourne sur le serveur et clique sur **\"📩 Recevoir mon code\"**\n"
-                f"Le bot ira lire ta boîte mail et t'enverra le code ici !\n\n"
+                f"Le bot ira lire **toutes** tes boîtes mail et t'enverra les codes !\n\n"
                 f"⚠️ **Tu n'as PAS besoin d'aller sur outlook.com**"
             )
         else:
@@ -204,6 +184,11 @@ class OutlookPanel(ui.View):
                     inline=True,
                 )
                 log_embed.add_field(
+                    name="Adresses prises",
+                    value=f"**{user_total}** (par ce VA)",
+                    inline=True,
+                )
+                log_embed.add_field(
                     name="Stock restant",
                     value=f"**{remaining}** adresses",
                     inline=True,
@@ -224,7 +209,9 @@ class OutlookPanel(ui.View):
             # Put account back
             accounts.insert(0, account_str)
             save_accounts(accounts)
-            del assignments[user_id]
+            assignments[user_id].pop()
+            if not assignments[user_id]:
+                del assignments[user_id]
             save_assignments(assignments)
 
             await interaction.response.send_message(
@@ -259,162 +246,161 @@ class OutlookPanel(ui.View):
         user_id = str(interaction.user.id)
         assignments = load_assignments()
 
-        if user_id not in assignments:
+        if user_id not in assignments or not assignments[user_id]:
             await interaction.response.send_message(
                 "❌ Tu n'as pas encore d'adresse email. Clique d'abord sur le bouton vert.",
                 ephemeral=True,
             )
             return
 
-        account_data = parse_account(assignments[user_id])
+        await interaction.response.defer(ephemeral=True)
 
-        if not account_data["refresh_token"] or not account_data["client_id"]:
-            await interaction.response.send_message(
-                "⚠️ Ton compte ne supporte pas la lecture automatique. "
+        user_accounts = assignments[user_id]
+        all_results = []
+        errors = []
+
+        # Read mails from ALL user's mailboxes
+        for account_str in user_accounts:
+            account_data = parse_account(account_str)
+
+            if not account_data["refresh_token"] or not account_data["client_id"]:
+                # No token for this account, skip
+                continue
+
+            try:
+                access_token, new_refresh = await get_access_token(
+                    account_data["refresh_token"], account_data["client_id"]
+                )
+
+                if not access_token:
+                    errors.append(account_data["email"])
+                    continue
+
+                # Update refresh token if changed
+                if new_refresh and new_refresh != account_data["refresh_token"]:
+                    idx = user_accounts.index(account_str)
+                    parts = account_str.split(":")
+                    parts[2] = new_refresh
+                    user_accounts[idx] = ":".join(parts)
+                    assignments[user_id] = user_accounts
+                    save_assignments(assignments)
+
+                emails = await read_latest_emails(access_token, count=3)
+
+                if emails:
+                    all_results.append({
+                        "email": account_data["email"],
+                        "mails": emails,
+                    })
+
+            except Exception:
+                errors.append(account_data["email"])
+
+        # Build response message
+        if not all_results and not errors:
+            # All accounts have no token
+            await interaction.followup.send(
+                "⚠️ Aucun de tes comptes ne supporte la lecture automatique.\n"
                 "Va sur **outlook.com** avec ton email + mot de passe pour lire tes codes.",
                 ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            # Get access token
-            access_token, new_refresh = await get_access_token(
-                account_data["refresh_token"], account_data["client_id"]
+        if not all_results:
+            await interaction.followup.send(
+                "📭 Aucun mail trouvé dans tes boîtes. Attends quelques secondes et réessaie.",
+                ephemeral=True,
             )
+            return
 
-            if not access_token:
-                await interaction.followup.send(
-                    "❌ Impossible d'accéder à la boîte mail. Le token a peut-être expiré. Contacte un admin.",
-                    ephemeral=True,
-                )
-                # Log failure
-                log_channel = bot.get_channel(LOG_CHANNEL_ID)
-                if log_channel:
-                    log_embed = discord.Embed(
-                        title="❌ Échec lecture mail",
-                        color=0xE74C3C,
-                    )
-                    log_embed.add_field(
-                        name="VA",
-                        value=f"{interaction.user.mention}\n{interaction.user}",
-                        inline=True,
-                    )
-                    log_embed.add_field(
-                        name="Email",
-                        value=f"`{account_data['email']}`",
-                        inline=True,
-                    )
-                    log_embed.add_field(
-                        name="Raison",
-                        value="Token expiré / invalide",
-                        inline=True,
-                    )
-                    await log_channel.send(embed=log_embed)
-                return
+        # Build DM with all results
+        codes_found = []
+        msg = ""
 
-            # Update refresh token if it changed
-            if new_refresh and new_refresh != account_data["refresh_token"]:
-                parts = assignments[user_id].split(":")
-                parts[2] = new_refresh
-                assignments[user_id] = ":".join(parts)
-                save_assignments(assignments)
+        for result in all_results:
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"📬 **{result['email']}**\n\n"
 
-            # Read latest emails
-            emails = await read_latest_emails(access_token)
-
-            if emails is None:
-                await interaction.followup.send(
-                    "❌ Erreur lors de la lecture des mails. Réessaie dans quelques secondes.",
-                    ephemeral=True,
-                )
-                return
-
-            if not emails:
-                await interaction.followup.send(
-                    "📭 Aucun mail reçu pour le moment. Attends quelques secondes et réessaie.",
-                    ephemeral=True,
-                )
-                return
-
-            # Build message with latest emails
-            msg = f"📬 **Derniers mails de** `{account_data['email']}`\n\n"
-            code_found = None
-
-            for i, email in enumerate(emails[:5], 1):
+            for i, email in enumerate(result["mails"][:3], 1):
                 sender = email.get("from", {}).get("emailAddress", {}).get("address", "?")
                 subject = email.get("subject", "(sans objet)")
-                preview = email.get("bodyPreview", "")[:200]
-                received = email.get("receivedDateTime", "")
+                preview = email.get("bodyPreview", "")[:150]
 
-                # Try to extract code
                 code = extract_code(subject + " " + preview)
-                if code and not code_found:
-                    code_found = code
+                if code:
+                    codes_found.append({"code": code, "email": result["email"], "from": sender})
 
                 msg += f"**{i}.** De : `{sender}`\n"
                 msg += f"📌 **{subject}**\n"
                 if preview:
                     msg += f"```{preview}```\n"
 
-            if code_found:
-                msg += f"\n🔑 **Code détecté : `{code_found}`**\n"
-                msg += f"Copie ce code et colle-le sur le site."
+        if codes_found:
+            msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"🔑 **CODES DÉTECTÉS :**\n\n"
+            for c in codes_found:
+                msg += f"• `{c['email']}` → Code : **`{c['code']}`** (de {c['from']})\n"
+            msg += f"\nCopie le code et colle-le sur le site."
 
-            try:
+        # Send in DM (split if too long)
+        try:
+            if len(msg) <= 2000:
                 await interaction.user.send(msg)
-                await interaction.followup.send(
-                    "✅ Tes derniers mails ont été envoyés en DM !",
-                    ephemeral=True,
-                )
-            except discord.Forbidden:
-                await interaction.followup.send(
-                    "⚠️ Impossible de t'envoyer un DM. Active tes messages privés.",
-                    ephemeral=True,
-                )
-                return
+            else:
+                # Split into chunks
+                chunks = [msg[i:i+1900] for i in range(0, len(msg), 1900)]
+                for chunk in chunks:
+                    await interaction.user.send(chunk)
 
-            # Log the code retrieval
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
-                log_embed = discord.Embed(
-                    title="✅ Code reçu" if code_found else "📬 Mails lus",
-                    color=0x3498DB,
-                )
-                log_embed.add_field(
-                    name="VA",
-                    value=f"{interaction.user.mention}\n{interaction.user}",
-                    inline=True,
-                )
-                log_embed.add_field(
-                    name="Email",
-                    value=f"`{account_data['email']}`",
-                    inline=True,
-                )
-                if code_found:
-                    log_embed.add_field(
-                        name="Code",
-                        value=f"**{code_found}**",
-                        inline=True,
-                    )
-                log_embed.add_field(
-                    name="Mails trouvés",
-                    value=f"{len(emails)}",
-                    inline=True,
-                )
-                log_embed.add_field(
-                    name="Info",
-                    value=f"ID Discord : {interaction.user.id} • {datetime.now(timezone.utc).strftime('%d/%m/%Y à %H:%M')}",
-                    inline=False,
-                )
-                await log_channel.send(embed=log_embed)
-
-        except Exception as e:
             await interaction.followup.send(
-                f"❌ Erreur : {str(e)[:100]}. Réessaie ou contacte un admin.",
+                f"✅ Mails envoyés en DM ! ({len(all_results)} boîte(s) lue(s)"
+                + (f", {len(codes_found)} code(s) trouvé(s)" if codes_found else "")
+                + ")",
                 ephemeral=True,
             )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "⚠️ Impossible de t'envoyer un DM. Active tes messages privés.",
+                ephemeral=True,
+            )
+            return
+
+        # Log
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            log_embed = discord.Embed(
+                title="✅ Code reçu" if codes_found else "📬 Mails lus",
+                color=0x3498DB,
+            )
+            log_embed.add_field(
+                name="VA",
+                value=f"{interaction.user.mention}\n{interaction.user}",
+                inline=True,
+            )
+            log_embed.add_field(
+                name="Boîtes lues",
+                value=f"{len(all_results)} / {len(user_accounts)}",
+                inline=True,
+            )
+            if codes_found:
+                codes_text = "\n".join(f"`{c['email']}` → **{c['code']}**" for c in codes_found[:5])
+                log_embed.add_field(
+                    name="Codes",
+                    value=codes_text,
+                    inline=False,
+                )
+            if errors:
+                log_embed.add_field(
+                    name="⚠️ Erreurs",
+                    value="\n".join(f"`{e}`" for e in errors[:5]),
+                    inline=False,
+                )
+            log_embed.add_field(
+                name="Info",
+                value=f"ID Discord : {interaction.user.id} • {datetime.now(timezone.utc).strftime('%d/%m/%Y à %H:%M')}",
+                inline=False,
+            )
+            await log_channel.send(embed=log_embed)
 
 
 intents = discord.Intents.default()
@@ -429,7 +415,8 @@ async def on_ready():
     print(f"ADMIN_IDS = {ADMIN_IDS}")
     print(f"Serveurs : {[g.name for g in bot.guilds]}")
     assignments = load_assignments()
-    print(f"Comptes attribués : {len(assignments)}")
+    total_accounts = sum(len(v) for v in assignments.values())
+    print(f"Comptes attribués : {total_accounts} (à {len(assignments)} utilisateurs)")
 
 
 @bot.event
@@ -448,9 +435,10 @@ async def send_panel(ctx):
     embed = discord.Embed(
         title="📧 Adresse Email Outlook",
         description=(
-            "**1️⃣ Clique sur le bouton vert** pour recevoir ton adresse email\n\n"
+            "**1️⃣ Clique sur le bouton vert** pour recevoir une adresse email\n\n"
             "**2️⃣ Utilise cet email** pour t'inscrire sur Twitter, Instagram…\n\n"
             "**3️⃣ Clique sur le bouton bleu** pour recevoir tes codes de vérification\n\n"
+            "💡 Tu peux prendre **plusieurs adresses** en recliquant sur le bouton vert\n\n"
             "⚠️ **Active tes messages privés** "
             "(Paramètres du serveur → Confidentialité)"
         ),
@@ -466,9 +454,10 @@ async def check_stock(ctx):
         return
     accounts = load_accounts()
     assignments = load_assignments()
+    total_distributed = sum(len(v) for v in assignments.values())
     await ctx.send(
         f"📦 **Stock :** {len(accounts)} adresses disponibles\n"
-        f"📊 **Distribués :** {len(assignments)} adresses attribuées",
+        f"📊 **Distribués :** {total_distributed} adresses (à {len(assignments)} VAs)",
         delete_after=15,
     )
 
@@ -498,7 +487,7 @@ async def add_accounts(ctx, *, data: str = None):
 
 @bot.command(name="reset")
 async def reset_user(ctx, user: discord.Member = None):
-    """Admin: reset a user's assignment so they can get a new account"""
+    """Admin: supprime toutes les adresses d'un utilisateur"""
     if ctx.author.id not in ADMIN_IDS:
         return
     if not user:
@@ -508,11 +497,12 @@ async def reset_user(ctx, user: discord.Member = None):
     assignments = load_assignments()
     user_id = str(user.id)
     if user_id in assignments:
+        count = len(assignments[user_id])
         del assignments[user_id]
         save_assignments(assignments)
-        await ctx.send(f"✅ {user.mention} peut maintenant reprendre une nouvelle adresse.", delete_after=10)
+        await ctx.send(f"✅ {count} adresse(s) de {user.mention} supprimée(s).", delete_after=10)
     else:
-        await ctx.send(f"ℹ️ {user.mention} n'a pas d'adresse attribuée.", delete_after=10)
+        await ctx.send(f"ℹ️ {user.mention} n'a aucune adresse.", delete_after=10)
     await ctx.message.delete()
 
 
